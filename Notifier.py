@@ -59,7 +59,7 @@ class Notifier:
         if should_notify:
             self.max_notification -= 1
             if self.fallback:
-                subprocess.call("notify-send", self.message)
+                subprocess.call(["notify-send", self.message])
 
             else:
                 self.notification.update("ThunderPopper", self.message, None)
@@ -90,4 +90,5 @@ if __name__ == "__main__":
     else:
         msg = "You have a new message!"
     app = Notifier(msg)
-    loop.run()
+    if not fallback:
+        loop.run()
