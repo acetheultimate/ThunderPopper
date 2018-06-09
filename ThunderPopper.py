@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 import sys
 import time
 import shelve
@@ -7,70 +7,9 @@ import imaplib
 import traceback
 import subprocess
 
-fallback = False
-try:
-    import gi
-    gi.require_version('Notify', '0.7')
-    from gi.repository import Notify
-    Notify.init(app_name="ThunderPopper")
-except ModuleNotFoundError:
-    import subprocess
-    fallback = True
+notifier = None
 
 popper_data = shelve.open("thunderpopper", writeback=True)
-
-
-class Notifier:
-    """A notifier to give pop ups when new information is available."""
-
-    def __init__(self, fallback):
-        """__init__ Takes an argument which lets us to decide what modules to choose.
-
-        Arguments:
-            fallback {boolean} -- True says use gi lib while false says go with
-                                  notify-send.
-        """
-
-        self.fallback = fallback
-        self.notification = None
-        self.tbird_notification_count = 0
-        try:
-            self.notification = Notify.Notification.new(
-                "ThunderPopper", "Welcome", None)
-        except ModuleNotFoundError:
-            import os
-            self.fallback = True
-
-    def send_notification(self, message):
-        """send_notificatioin
-
-        Send pop-up notification to users.
-
-        Arguments:
-            message {str} -- A string containing Message.
-        """
-
-        should_notify = False
-        # Check if thunderbird is open
-        thunderbird = subprocess.check_output(
-            "ps aux | grep /usr/lib/thunderbird", shell=True).decode()
-        if len(thunderbird.split("\n")) > 3:
-            if self.tbird_notification_count == 0:
-                self.tbird_notification_count = 1
-                should_notify = True
-        else:
-            should_notify = True
-            self.tbird_notification_count = 0
-
-        if should_notify:
-            if self.fallback:
-                subprocess.call("notify-send", message)
-            else:
-                self.notification.update("ThunderPopper", message, None)
-                self.notification.show()
-
-
-notifier_obj = Notifier(fallback)
 
 
 class Account:
@@ -81,7 +20,6 @@ class Account:
 
     def __init__(self, database):
         self.popper_data = database
-        self.username = self.password = None
 
     def list_accounts(self):
         """list_accounts
@@ -114,7 +52,7 @@ class Account:
     def login(self, acid=None):
         """login
 
-        Give back login creadentials needed to log in for given Account ID. If
+        Give back login credentials needed to log in for given Account ID. If
         account ID is not given it lists accounts and ask user to choose one.
 
         Arguments:
@@ -132,20 +70,20 @@ class Account:
         if login:
             for acid in self.popper_data["accounts"]:
                 if acid == login:
-                    self.server_port = self.popper_data["accounts"][acid]["server_port"]
-                    self.username = self.popper_data["accounts"][acid]['uname']
-                    self.password = self.popper_data["accounts"][acid]['password']
-                    return self.server_port, self.username, self.password
+                    server_port = self.popper_data["accounts"][acid]["server_port"]
+                    username = self.popper_data["accounts"][acid]['uname']
+                    password = self.popper_data["accounts"][acid]['password']
+                    return server_port, username, password
             else:
                 return False
 
         else:
             acid = self.list_accounts()
             if acid in self.popper_data["accounts"]:
-                self.server_port = self.popper_data["accounts"][acid]["server_port"]
-                self.username = self.popper_data["accounts"][acid]['uname']
-                self.password = self.popper_data["accounts"][acid]['password']
-                return self.server_port, self.username, self.password
+                server_port = self.popper_data["accounts"][acid]["server_port"]
+                username = self.popper_data["accounts"][acid]['uname']
+                password = self.popper_data["accounts"][acid]['password']
+                return server_port, username, password
             else:
                 print("Invalid Account ID.")
                 return False
@@ -184,6 +122,7 @@ class Account:
         Arguments:
             acid {int} -- Account ID of the user.
         """
+        new_value = None
         if not acid:
             acid = self.list_accounts()
 
@@ -241,7 +180,7 @@ class Mailer:
         try:
             self.mailClient = imaplib.IMAP4_SSL(host, port)
         except Exception as e:
-            notifier_obj.send_notification(f"Error {e} occured!")
+            subprocess.call(["./Notifier.py", f'Error {e} occured!'])
             exit()
 
     def login(self, uname, pwd):
@@ -271,6 +210,8 @@ class Mailer:
 
 
 if __name__ == "__main__":
+    action = None
+    login_creds = False
     if not len(sys.argv) > 1:
         last_user = popper_data.get("last_login", None)
         last_user_str = ""
@@ -285,7 +226,6 @@ if __name__ == "__main__":
 
     try:
         account_object = Account(popper_data)
-        login_creds = False
         if action == '1':
             login_creds = account_object.login()
         elif action == '2':
@@ -321,8 +261,7 @@ if __name__ == "__main__":
                 n_new = int(n_new[0]) if n_new[0] else None
                 if ((n_new and n_new > 0) and ((time.clock() - pre_time) > 5 or
                                                (pre_n_new != n_new))):
-                    notifier_obj.send_notification(
-                        f"You have {n_new} unread email(s)!")
+                    subprocess.call(["./Notifier.py", f'You have {n_new} unread email(s)!'])
                 time.sleep(1)
         except KeyboardInterrupt:
             # Let's exit gracefully
