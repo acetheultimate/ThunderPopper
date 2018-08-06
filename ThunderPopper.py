@@ -13,7 +13,7 @@ popper_data = shelve.open("thunderpopper", writeback=True)
 
 
 class Account:
-    """ Handles all account related functionlity.
+    """ Handles all account related functionality.
 
     Contains functions related to accounts like list, add, remove, edit.
     """

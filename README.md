@@ -13,5 +13,5 @@ A python application which gives you pop up and launches Thunderbird Email clien
       - Type alarmPop in column Name
       - Type /bin/bash -c "sleep 15 && cd /path/to/dir/ThunderPopper/; ./ThunderPopper.py >> /path/to/dir/ThunderPopper/out.txt" in column Command. You may also try cron or any other tool which run the script at startup.
  
-
+Multi Account Syncing support coming up...
 Do let me know if anything breaks. Also, I'd very much appreciate any help or suggestion. Just fork it up and get started!
