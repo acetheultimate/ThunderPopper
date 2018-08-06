@@ -6,6 +6,13 @@ import getpass
 import imaplib
 import traceback
 import subprocess
+import threading
+import logging
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(levelname)s: %(threadName)-15s:  %(message)s",
+)
 
 notifier = None
 
@@ -62,31 +69,23 @@ class Account:
             tuple{int} -- returns login credentials needed for login
         """
 
-        login = None
-
         if acid:
-            login = acid
-
-        if login:
-            for acid in self.popper_data["accounts"]:
+            for login in self.popper_data["accounts"]:
                 if acid == login:
                     server_port = self.popper_data["accounts"][acid]["server_port"]
                     username = self.popper_data["accounts"][acid]['uname']
                     password = self.popper_data["accounts"][acid]['password']
+                    logging.debug("Got creds, logging in to the server.")
                     return server_port, username, password
             else:
+                logging.debug("Error while handling acid %s" % acid)
                 return False
-
         else:
-            acid = self.list_accounts()
-            if acid in self.popper_data["accounts"]:
-                server_port = self.popper_data["accounts"][acid]["server_port"]
-                username = self.popper_data["accounts"][acid]['uname']
-                password = self.popper_data["accounts"][acid]['password']
-                return server_port, username, password
-            else:
-                print("Invalid Account ID.")
-                return False
+            acid, payload = self.list_accounts()
+            server_port = payload["server_port"]
+            username = payload['uname']
+            password = payload['password']
+            return server_port, username, password
 
     def create_account(self):
         """create_account
@@ -94,24 +93,34 @@ class Account:
         Creates an account and store creds in db
         """
 
-        new_id = self.popper_data.get("accounts", None)
+        new_id = self.popper_data.get("accounts", 0)
         if new_id:
-            new_id = list(new_id.keys())[-1] + 1
-        else:
-            new_id = 0
+            c = 0
+            while c in list(new_id.keys()):
+                c += 1
+            new_id = c
+
         server, port = [i.strip() for i in input(
             "Enter comma-separated server and port:  ").split(",")]
-        uname = input("Enter User name: ")
-        password = getpass.getpass("Enter you password: ")
-        if not self.popper_data.get("accounts", None):
-            self.popper_data["accounts"] = {}
-        self.popper_data.sync()
-        self.popper_data["accounts"][new_id] = {
+        uname = input("Enter User name: ").strip()
+        password = getpass.getpass("Enter you password: ").strip()
+        if not (uname and password):
+            print("You username and password should not be empty.")
+            sys.exit()
+
+        payload = {
             "server_port": (server, int(port)),
             "uname": uname,
             "password": password
         }
+
+        if not self.popper_data.get("accounts", None):
+            self.popper_data["accounts"] = {}
+
         self.popper_data.sync()
+        self.popper_data["accounts"][new_id] = payload
+        self.popper_data.sync()
+        return new_id, payload
 
     def edit_account(self, acid=None):
         """edit_account
@@ -209,34 +218,78 @@ class Mailer:
         return self.mailClient.search(None, "UnSeen")
 
 
-if __name__ == "__main__":
-    action = None
-    login_creds = False
-    if not len(sys.argv) > 1:
-        last_user = popper_data.get("last_login", None)
-        last_user_str = ""
-        if last_user:
-            last_user_str = " as " + popper_data.get("accounts").get(last_user)
-        action = input("Choose an option to proceed with:\n" +
-                       f"\t1. Login {last_user_str}\n" +
-                       "\t2. Logout\n" +
-                       "\t3. Create an account\n" +
-                       "\t4. Edit an account\n" +
-                       "\t5. Delete an account: ")
+def main(login_creds):
+    server, port = login_creds[0]
+    uname, password = login_creds[1:]
+    mailer_object = Mailer(server, port)
+    mailer_object.login(uname, password)
 
+    pre_n_new = 0
+    pre_time = time.clock()
+    status, n_new = mailer_object.check()
+    try:
+        while status == "OK":
+            status, n_new = mailer_object.check()
+            n_new = int(n_new[0]) if n_new[0] else None
+            if ((n_new and n_new > 0) and ((time.clock() - pre_time) > 5 or
+                                           (pre_n_new != n_new))):
+                subprocess.call(["./Notifier.py", f'You have {n_new} unread email(s)!'])
+            time.sleep(1)
+    except KeyboardInterrupt:
+        # Let's exit gracefully
+        sys.exit()
+
+if __name__ == "__main__":
     try:
         account_object = Account(popper_data)
-        if action == '1':
-            login_creds = account_object.login()
-        elif action == '2':
-            account_object.popper_data['last_login'] = None
-            print("Logged Out!")
-        elif action == '3':
-            account_object.create_account()
-        elif action == '4':
-            account_object.edit_account()
-        elif action == '5':
-            account_object.delete_account()
+        action = None
+        login_creds_list = False
+        last_user_list = None
+
+        if len(sys.argv) == 1:
+            last_user_list = popper_data.get("last_logins", None)
+            if len(last_user_list):
+                login_creds_list = []
+                logging.debug(
+                    "Logging in with " + ", ".join(str(popper_data["accounts"][i]['uname']) for i in last_user_list))
+                for acid in last_user_list:
+                    login_creds_list.append(account_object.login(acid))
+
+        elif len(sys.argv) == 2:
+            if sys.argv[1] == "-i":
+                # Interactive mode
+                action = input("Choose an option to proceed with:\n" +
+                               "\t1. Login\n" +
+                               "\t2. Logout\n" +
+                               "\t3. Create an account\n" +
+                               "\t4. Edit an account\n" +
+                               "\t5. Delete an account: ")
+                if action == '1':
+                    login_creds_list = [account_object.login()]
+                elif action == '2':
+                    account_object.popper_data['last_logins'] = None
+                    print("Logged Out!")
+                elif action == '3':
+                    account_object.create_account()
+                elif action == '4':
+                    account_object.edit_account()
+                elif action == '5':
+                    account_object.delete_account()
+
+            elif sys.argv[1] == "-x":
+                # Logout from All
+                account_object.popper_data['last_logins'] = None
+                print("Logged out from all accounts!")
+                sys.exit()
+        else:
+            logging.warn("Weird >" + "<>".join(sys.argv) + "<")
+            sys.exit()
+
+        if login_creds_list:
+            main_threads = []
+            for login_creds in login_creds_list:
+                main_threads.append(threading.Thread(target=main, name=login_creds[1], args=(login_creds,)))
+            (t.start() for t in main_threads)
 
     except Exception as e:
         print("An error occured.")
@@ -245,24 +298,3 @@ if __name__ == "__main__":
         print("-----------------")
     finally:
         popper_data.close()
-
-    if login_creds:
-        server, port = login_creds[0]
-        uname, password = login_creds[1:]
-        mailer_object = Mailer(server, port)
-        mailer_object.login(uname, password)
-
-        pre_n_new = 0
-        pre_time = time.clock()
-        status, n_new = mailer_object.check()
-        try:
-            while status == "OK":
-                status, n_new = mailer_object.check()
-                n_new = int(n_new[0]) if n_new[0] else None
-                if ((n_new and n_new > 0) and ((time.clock() - pre_time) > 5 or
-                                               (pre_n_new != n_new))):
-                    subprocess.call(["./Notifier.py", f'You have {n_new} unread email(s)!'])
-                time.sleep(1)
-        except KeyboardInterrupt:
-            # Let's exit gracefully
-            sys.exit()
