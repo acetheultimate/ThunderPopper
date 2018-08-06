@@ -85,6 +85,9 @@ class Account:
             server_port = payload["server_port"]
             username = payload['uname']
             password = payload['password']
+            if self.popper_data.get('last_logins', None):
+                self.popper_data["last_logins"].append(acid)
+                self.popper_data.sync()
             return server_port, username, password
 
     def create_account(self):
@@ -99,9 +102,11 @@ class Account:
             while c in list(new_id.keys()):
                 c += 1
             new_id = c
-
-        server, port = [i.strip() for i in input(
-            "Enter comma-separated server and port:  ").split(",")]
+        try:
+            server, port = [i.strip() for i in input("Enter comma-separated server and port:  ").split(",")]
+        except ValueError as e:
+            print("Error: ", e)
+            sys.exit()
         uname = input("Enter User name: ").strip()
         password = getpass.getpass("Enter you password: ").strip()
         if not (uname and password):
@@ -239,6 +244,7 @@ def main(login_creds):
         # Let's exit gracefully
         sys.exit()
 
+
 if __name__ == "__main__":
     try:
         account_object = Account(popper_data)
@@ -248,7 +254,7 @@ if __name__ == "__main__":
 
         if len(sys.argv) == 1:
             last_user_list = popper_data.get("last_logins", None)
-            if len(last_user_list):
+            if last_user_list and len(last_user_list):
                 login_creds_list = []
                 logging.debug(
                     "Logging in with " + ", ".join(str(popper_data["accounts"][i]['uname']) for i in last_user_list))
