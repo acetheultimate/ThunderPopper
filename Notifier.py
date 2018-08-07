@@ -28,12 +28,12 @@ class Notifier:
         self.fallback = fallback
         self.notification = None
         self.tbird_notification_count = 0
-        self.max_notification = 5
+        self.max_notification = 1
         if not fallback:
             self.notification = Notify.Notification.new(
                 "ThunderPopper", "Welcome", None)
             self.notification.add_action('1', 'Open ThunderBird', self.notification_callback, None)
-            self.notification.add_action('2', 'Dismiss', self.notification_callback, {"Hello": "world"})
+            self.notification.add_action('2', 'Dismiss', self.notification_callback, None)
             self.notification.connect("closed", self.closed)
 
         self.send_notification()
@@ -79,7 +79,9 @@ class Notifier:
         self.closed()
 
     @staticmethod
-    def closed():
+    def closed(*args):
+        if len(args):
+            print('Clicked')
         loop.quit()
 
 

@@ -75,19 +75,23 @@ class Account:
                     server_port = self.popper_data["accounts"][acid]["server_port"]
                     username = self.popper_data["accounts"][acid]['uname']
                     password = self.popper_data["accounts"][acid]['password']
-                    logging.debug("Got creds, logging in to the server.")
+                    logging.debug("Got creds, returning to pass to the server.")
                     return server_port, username, password
             else:
                 logging.debug("Error while handling acid %s" % acid)
                 return False
         else:
-            acid, payload = self.list_accounts()
+            acid = self.list_accounts()
+            payload = self.popper_data["accounts"][acid]
             server_port = payload["server_port"]
             username = payload['uname']
             password = payload['password']
             if self.popper_data.get('last_logins', None):
-                self.popper_data["last_logins"].append(acid)
-                self.popper_data.sync()
+                if acid not in self.popper_data['last_logins']:
+                    self.popper_data["last_logins"].append(acid)
+            else:
+                self.popper_data["last_logins"] = [acid]
+            self.popper_data.sync()
             return server_port, username, password
 
     def create_account(self):
@@ -96,12 +100,16 @@ class Account:
         Creates an account and store creds in db
         """
 
-        new_id = self.popper_data.get("accounts", 0)
+        new_id = self.popper_data.get("accounts", None)
         if new_id:
-            c = 0
+            c = 2
             while c in list(new_id.keys()):
                 c += 1
             new_id = c
+        else:
+            self.popper_data["accounts"] = {}
+            new_id = 1
+
         try:
             server, port = [i.strip() for i in input("Enter comma-separated server and port:  ").split(",")]
         except ValueError as e:
@@ -113,19 +121,14 @@ class Account:
             print("You username and password should not be empty.")
             sys.exit()
 
-        payload = {
+        self.popper_data.sync()
+        self.popper_data["accounts"][new_id] = {
             "server_port": (server, int(port)),
             "uname": uname,
             "password": password
         }
-
-        if not self.popper_data.get("accounts", None):
-            self.popper_data["accounts"] = {}
-
         self.popper_data.sync()
-        self.popper_data["accounts"][new_id] = payload
-        self.popper_data.sync()
-        return new_id, payload
+        return new_id
 
     def edit_account(self, acid=None):
         """edit_account
@@ -177,6 +180,8 @@ class Account:
             acid = self.list_accounts()
 
         del self.popper_data["accounts"][acid]
+        if acid in self.popper_data.get("last_logins", []):
+            self.popper_data["last_logins"].remove(acid)
 
     def print_db(self):
         """print_db For testing purpose
@@ -193,8 +198,9 @@ class Mailer:
     def __init__(self, host, port):
         try:
             self.mailClient = imaplib.IMAP4_SSL(host, port)
+            logging.debug("Connection to the server made!")
         except Exception as e:
-            subprocess.call(["./Notifier.py", f'Error {e} occured!'])
+            logging.error('Error %s occured!' % e)
             exit()
 
     def login(self, uname, pwd):
@@ -206,9 +212,11 @@ class Mailer:
             uname {str} -- Username
             pwd {str} -- Password
         """
-
+        logging.debug("Logging in...")
         self.mailClient.login(uname, pwd)
-        self.mailClient.select()
+        logging.debug("Logged in successfully!")
+        self.mailClient.select(readonly=True)
+        logging.debug("Inbox Selected!")
 
     def check(self):
         """check Check for incoming mails
@@ -219,8 +227,18 @@ class Mailer:
             tuple -- Returns a tuple containing status and number of unread
                      emails, if any.
         """
-
-        return self.mailClient.search(None, "UnSeen")
+        logging.debug("Searching for unseens...")
+        res, messages = self.mailClient.search(None, '(UNSEEN)')
+        if res == "OK":
+            n = 0
+            for num in messages[0].split():
+                n += 1
+                typ, data = self.mailClient.fetch(num, '(RFC822)')
+                for response_part in data:
+                    if isinstance(response_part, tuple):
+                        typ, data = self.mailClient.store(num, '+FLAGS', '\\Seen')
+            return res, [n]
+        return None
 
 
 def main(login_creds):
@@ -228,7 +246,6 @@ def main(login_creds):
     uname, password = login_creds[1:]
     mailer_object = Mailer(server, port)
     mailer_object.login(uname, password)
-
     pre_n_new = 0
     pre_time = time.clock()
     status, n_new = mailer_object.check()
@@ -238,7 +255,9 @@ def main(login_creds):
             n_new = int(n_new[0]) if n_new[0] else None
             if ((n_new and n_new > 0) and ((time.clock() - pre_time) > 5 or
                                            (pre_n_new != n_new))):
-                subprocess.call(["./Notifier.py", f'You have {n_new} unread email(s)!'])
+                res = subprocess.check_output(["./Notifier.py", f'You have {n_new} unread email(s)!']).decode().strip()
+                pre_time = time.clock()
+
             time.sleep(1)
     except KeyboardInterrupt:
         # Let's exit gracefully
@@ -292,10 +311,9 @@ if __name__ == "__main__":
             sys.exit()
 
         if login_creds_list:
-            main_threads = []
             for login_creds in login_creds_list:
-                main_threads.append(threading.Thread(target=main, name=login_creds[1], args=(login_creds,)))
-            (t.start() for t in main_threads)
+                t = threading.Thread(target=main, name=login_creds[1], args=(login_creds,))
+                t.start()
 
     except Exception as e:
         print("An error occured.")
