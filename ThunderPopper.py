@@ -255,7 +255,7 @@ def main(login_creds):
             n_new = int(n_new[0]) if n_new[0] else None
             if ((n_new and n_new > 0) and ((time.clock() - pre_time) > 5 or
                                            (pre_n_new != n_new))):
-                res = subprocess.check_output(["./Notifier.py", f'You have {n_new} unread email(s)!']).decode().strip()
+                subprocess.call(["./Notifier.py", f'You have {n_new} unread email(s)!'])
                 pre_time = time.clock()
 
             time.sleep(1)

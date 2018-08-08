@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import subprocess
 import sys
+import shelve
+notifier = shelve.open("notifier")
 
 fallback = False
 loop = None
@@ -18,17 +20,19 @@ except ModuleNotFoundError:
 class Notifier:
     """A notifier to give pop ups when new information is available."""
 
-    def __init__(self, message):
+    def __init__(self, notification_key, message):
         """__init__ Takes an argument which lets us to decide what message to show.
 
         Arguments:
+             notification_key {int} --- unique identifier for notification
              message {boolean} -- Text to be popped-up
         """
+        self.notification_key = notification_key
         self.message = message
         self.fallback = fallback
         self.notification = None
         self.tbird_notification_count = 0
-        self.max_notification = 1
+        self.max_notification = 3
         if not fallback:
             self.notification = Notify.Notification.new(
                 "ThunderPopper", "Welcome", None)
@@ -39,58 +43,65 @@ class Notifier:
         self.send_notification()
 
     def send_notification(self):
-        """send_notificatioin
+        """send_notification
 
         Send pop-up notification to users.
         """
-
+        print(self.max_notification, self.tbird_notification_count)
         should_notify = False
         # Check if thunderbird is open
-        thunderbird = subprocess.check_output(
-            "ps aux | grep /usr/lib/thunderbird", shell=True).decode()
-        if len(thunderbird.split("\n")) > 3:
+        thunderbird = len(subprocess.check_output(
+            "ps aux | grep /usr/lib/thunderbird", shell=True).decode().split("\n")) > 3
+
+        if thunderbird:
             if self.tbird_notification_count == 0:
                 self.tbird_notification_count = 1
-                should_notify = True
         else:
-            should_notify = True
             self.tbird_notification_count = 0
 
-        if should_notify:
-            self.max_notification -= 1
-            if self.fallback:
-                subprocess.call(["notify-send", self.message])
+        self.max_notification -= 1
+        if self.fallback:
+            subprocess.call(["notify-send", self.message])
 
-            else:
-                self.notification.update("ThunderPopper", self.message, None)
-                self.notification.show()
-
-        if not fallback:
-            if self.max_notification < 0:
+        else:
+            self.notification.update("ThunderPopper", self.message, None)
+            self.notification.show()
+            if self.max_notification < 0 or (thunderbird and self.tbird_notification_count == 1):
                 loop.quit()
             GLib.timeout_add_seconds(10, self.send_notification)
 
     def notification_callback(self, callback, action, data):
         if action == "1":
-            print("Open ThunderBird")
+            print("Opened ThunderBird")
             subprocess.Popen(["thunderbird"])
         elif action == "2":
-            print("Dismiss")
+            print("Dismissed")
+        if action:
+            notifier[self.notification_key] = action
         self.closed()
 
-    @staticmethod
-    def closed(*args):
+    def closed(self, *args):
         if len(args):
+            notifier[self.notification_key] = '3'
             print('Clicked')
+        notifier.sync()
+        notifier.close()
         loop.quit()
 
 
 if __name__ == "__main__":
     msg = ''
-    if len(sys.argv) > 1:
+    if len(sys.argv) == 2:
+        key = ""
         msg = sys.argv[1]
+    elif len(sys.argv) == 3:
+        key = sys.argv[1]
+        msg = sys.argv[2]
     else:
+        key = ""
         msg = "You have a new message!"
-    app = Notifier(msg)
-    if not fallback:
-        loop.run()
+
+    if not (notifier.get(key, None) and key != ''):
+        app = Notifier(key, msg)
+        if not fallback:
+            loop.run()
